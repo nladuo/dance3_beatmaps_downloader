@@ -1,6 +1,5 @@
 # dance3_beatmaps_downloader
-舞立方自制谱下载
-
+舞立方自制谱下载，导出格式：malody。
 
 ### 1. 下载谱面列表
 ```shell
