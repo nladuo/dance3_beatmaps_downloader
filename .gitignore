@@ -1,0 +1,8 @@
+beatmaps/
+*.json
+*.txt
+make_beatmap2.py
+*.zip
+1/
+.idea/
+__pycache__/
