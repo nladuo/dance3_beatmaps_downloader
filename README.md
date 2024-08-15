@@ -21,6 +21,7 @@ python 3_make_beatmap.py
 
 ### 4. 下载谱面
 ```shell
+mkdir beatmaps
 python 4_download_beatmaps.py
 ```
 
