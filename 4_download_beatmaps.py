@@ -23,7 +23,7 @@ _WIN_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)}
 
 
 def sanitize_name(name):
-    """??? Windows ??????????->_??????/?????/???"""
+    """清洗为 Windows 合法目录名：非法字符->_，处理保留名/尾点空格/超长。"""
     name = (name or "").strip()
     name = _ILLEGAL.sub("_", name)
     name = name.rstrip(". ")
