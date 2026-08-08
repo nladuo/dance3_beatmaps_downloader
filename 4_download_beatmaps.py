@@ -4,7 +4,7 @@
 - 跳过音频 IsBad=True 的歌曲（数据源坏音频标记，如 322-出山DJ 的 mp3）。
 - 文件名做 Windows 非法字符清洗，避免目录名乱码/非法。
 - 只处理 downloaded=0 的记录，支持断点续跑（已存在文件不重复下载）。
-- 网络请求带重试；单首失败不中断整体（失败列表打印在结尾）。
+- 网络请求带重试；单首失败不中断整体，同一首失败 2 次后自动跳过（标记完成并记录 dl_skip）。
 """
 import argparse
 import json
@@ -19,6 +19,7 @@ from beatmap2malody import get_beatmap_json
 
 BASE_DIR = "beatmaps"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+MAX_FAILS = 2  # 单首下载失败上限：首次失败下轮重试，仍失败则跳过并标记完成
 
 _ILLEGAL = re.compile(r"[\\/:*?\"<>|\x00-\x1f]")
 _WIN_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
@@ -125,8 +126,16 @@ def main():
             count += 1
             print(count, goods_id, goods_name, "done")
         except Exception as e:
-            failed.append(music_id)
-            print("FAIL song", music_id, goods_name, repr(e))
+            rec["dl_fails"] = rec.get("dl_fails", 0) + 1
+            rec["dl_error"] = repr(e)
+            if rec["dl_fails"] >= MAX_FAILS:
+                rec["dl_skip"] = True
+                db.save(conn, music_id, rec, downloaded=True)
+                print("SKIP song (2 fails):", music_id, goods_name, repr(e))
+            else:
+                db.save(conn, music_id, rec)
+                failed.append(music_id)
+                print("FAIL song (will retry next run):", music_id, goods_name, repr(e))
 
     print("done. downloaded:", count, "failed:", len(failed), failed[:20])
 
