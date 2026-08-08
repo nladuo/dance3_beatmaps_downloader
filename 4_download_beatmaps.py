@@ -1,52 +1,104 @@
+# -*- coding: utf-8 -*-
+"""4. 下载谱面：音频 mp3 + 谱面文本转 .mc → beatmaps/{GoodsID}-{GoodsName}/。
+
+- 跳过音频 IsBad=True 的歌曲（数据源坏音频标记，如 322-出山DJ 的 mp3）。
+- 文件名做 Windows 非法字符清洗，避免目录名乱码/非法。
+- 只处理 downloaded=0 的记录，支持断点续跑（已存在文件不重复下载）。
+"""
+import argparse
 import json
 import os
+import re
+
 import requests
-import pymongo
+
+import db
 from beatmap2malody import get_beatmap_json
 
-client = pymongo.MongoClient()
-db = client.dance3
-coll = db.songs
+BASE_DIR = "beatmaps"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-count = 0
-its = []
-for it in coll.find({}):
-    del it["_id"]
-    # print(it)
-    its.append(it)
-    GoodsID = it["GoodsID"]
-    GoodsName = it["GoodsName"]
-    AudioUrl = it["AudioUrl"]
-    BeatMaps = it["BeatMaps"]
-    # print(GoodsID, GoodsName)
-    filepath = f"{GoodsID}-{GoodsName}".replace("/", "|")
-    if not os.path.exists(f"beatmaps/{filepath}"):
-        os.mkdir(f"beatmaps/{filepath}")
-        audio_file_name = AudioUrl.split("/")[-1]
-        count += 1
-        print(count, audio_file_name, AudioUrl, BeatMaps)
+_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
 
-        OwnerName = it["OwnerName"]
-        BeginSeconds = it["GoodsInfo"]["BeginSeconds"]
-        BPM = it["GoodsInfo"]["BPM"]
-        with open(f"beatmaps/{filepath}/{audio_file_name}", "wb") as f2:
-            f2.write(requests.get(AudioUrl).content)
 
-        for beatmap in BeatMaps:
+def sanitize_name(name):
+    return _ILLEGAL.sub("|", name or "").strip().rstrip(".")
+
+
+def is_audio_bad(rec):
+    for f in (rec.get("GoodsInfo") or {}).get("ListFile", []):
+        if f.get("FileType") == 2 and f.get("IsBad"):
+            return True
+    return False
+
+
+def main():
+    parser = argparse.ArgumentParser(description="下载音频与谱面 .mc")
+    parser.add_argument("--limit", type=int, default=0, help="只处理前 N 首（0=全部，用于测试）")
+    parser.add_argument("--out", type=str, default=BASE_DIR, help="输出目录（默认 beatmaps）")
+    args = parser.parse_args()
+
+    out_dir = args.out
+    os.makedirs(out_dir, exist_ok=True)
+    conn = db.get_conn()
+    count = 0
+    for music_id, rec in db.iter_pending(conn, "downloaded"):
+        if args.limit and count >= args.limit:
+            break
+        goods_id = rec.get("GoodsID")
+        goods_name = rec.get("GoodsName") or ""
+        audio_url = rec.get("AudioUrl")
+        beatmaps = rec.get("BeatMaps") or []
+
+        if not goods_id or not beatmaps:
+            # 无谱面（或全部损坏）的歌曲直接标记完成，避免重复处理
+            db.save(conn, music_id, rec, downloaded=True)
+            continue
+        if is_audio_bad(rec):
+            print("skip bad audio:", music_id, goods_name, audio_url)
+            db.save(conn, music_id, rec, downloaded=True)
+            continue
+
+        folder = os.path.join(out_dir, f"{goods_id}-{sanitize_name(goods_name)}")
+        os.makedirs(folder, exist_ok=True)
+
+        audio_file_name = audio_url.split("/")[-1] if audio_url else ""
+        audio_path = os.path.join(folder, audio_file_name) if audio_file_name else None
+        if audio_path and not os.path.exists(audio_path):
+            print("download audio:", audio_file_name)
+            resp = requests.get(audio_url, timeout=120, headers=HEADERS)
+            resp.raise_for_status()
+            with open(audio_path, "wb") as f2:
+                f2.write(resp.content)
+
+        info = rec.get("GoodsInfo") or {}
+        owner_name = rec.get("OwnerName", "")
+        begin_seconds = info.get("BeginSeconds", 0)
+        bpm = info.get("BPM", 120)
+
+        for beatmap in beatmaps:
             try:
-                # print(beatmap["Url"])
-                # print(beatmap["Level"])
                 lev = beatmap["Level"]
-                with open("test.txt", "wb") as f2:
-                    f2.write(requests.get(beatmap["Url"]).content)
-                mc_filename = beatmap["Url"].split("/")[-1].split(".")[0] + ".mc"
+                url = beatmap["Url"]
+                resp = requests.get(url, timeout=60, headers=HEADERS)
+                resp.raise_for_status()
+                chart_text = resp.content.decode("utf8", errors="replace")
+                mc_name = url.split("/")[-1].split(".")[0] + ".mc"
+                mc_json = get_beatmap_json(
+                    owner_name, bpm, audio_file_name, begin_seconds, goods_name, lev, chart_text
+                )
+                with open(os.path.join(folder, mc_name), "w", encoding="utf-8") as f2:
+                    json.dump(mc_json, f2, ensure_ascii=False)
+                print("chart:", mc_name, "lev:", lev)
+            except Exception as e:
+                print("ERR chart", music_id, beatmap.get("Url"), e)
 
-                mc_json = get_beatmap_json(OwnerName, BPM, audio_file_name, BeginSeconds, GoodsName, lev)
+        db.save(conn, music_id, rec, downloaded=True)
+        count += 1
+        print(count, goods_id, goods_name, "done")
 
-                with open(f"beatmaps/{filepath}/{mc_filename}", "w") as f2:
-                    json.dump(mc_json, f2)
-            except:
-                pass
-
+    print("done. downloaded:", count)
 
 
+if __name__ == "__main__":
+    main()

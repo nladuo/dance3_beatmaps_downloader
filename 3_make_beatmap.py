@@ -1,33 +1,57 @@
-import requests
-import json
-import pymongo
+# -*- coding: utf-8 -*-
+"""3. 构建谱面列表 BeatMaps（从 GoodsInfo.ListFile 提取 FileType=1）→ 更新 sqlite。
 
-client = pymongo.MongoClient()
-db = client.dance3
-coll = db.songs
+跳过 IsBad=True 的谱面文件：数据源对坏文件有 IsBad 标记，
+之前损坏的谱面/音频（如 322-出山DJ）正是这种，直接剔除。
+只处理 beatmaps_done=0 的记录，支持断点续跑。
+"""
+import argparse
 
-count = 0
-for it in coll.find({}):
-    count += 1
-    print(count, it["GoodsInfo"]["GoodsName"], it["GoodsInfo"]["LevelList"])
-    levelMap = {}
-    for level in it["GoodsInfo"]["LevelList"]:
-        if level["MusicLev"] >= 0:
-            print(level)
-            levelMap[level["MusicLevNew"]] = level
+import db
 
-    beatmaps = []
-    for file in it["GoodsInfo"]["ListFile"]:
-        if file["FileType"] == 1:
-            print(file)
-            try:
-                file["Level"] = levelMap[file["MusicLev"]]["MusicLevel"]
-                file["Lev"] = levelMap[file["MusicLev"]]["MusicLev"]
-                beatmaps.append(file)
-            except:pass
 
-    coll.update({"_id": it["_id"]}, {
-        "$set": {
-            "BeatMaps": beatmaps
-        }
-    })
+def main():
+    parser = argparse.ArgumentParser(description="构建 BeatMaps 写入 sqlite")
+    parser.add_argument("--limit", type=int, default=0, help="只处理前 N 首（0=全部，用于测试）")
+    args = parser.parse_args()
+
+    conn = db.get_conn()
+    count = 0
+    skipped = 0
+    for music_id, rec in db.iter_pending(conn, "beatmaps_done"):
+        if args.limit and count >= args.limit:
+            break
+        info = rec.get("GoodsInfo") or {}
+
+        # MusicLev >= 0 的 LevelList 项才是真实谱面难度（MusicLevNew -> 难度条目）
+        level_map = {}
+        for level in info.get("LevelList", []):
+            if level.get("MusicLev", -1) >= 0:
+                level_map[level["MusicLevNew"]] = level
+
+        beatmaps = []
+        for f in info.get("ListFile", []):
+            if f.get("FileType") != 1:
+                continue
+            if f.get("IsBad"):
+                skipped += 1
+                print("skip bad chart:", music_id, f.get("Url"))
+                continue
+            lv = level_map.get(f.get("MusicLev"))
+            if not lv:
+                print("no level for chart:", music_id, "MusicLev=", f.get("MusicLev"))
+                continue
+            f["Level"] = lv["MusicLevel"]   # 谱面显示等级（如 11/12/13）
+            f["Lev"] = lv["MusicLev"]
+            beatmaps.append(f)
+
+        rec["BeatMaps"] = beatmaps
+        db.save(conn, music_id, rec, beatmaps_done=True)
+        count += 1
+        print(count, rec.get("GoodsName"), [b.get("MusicLev") for b in beatmaps])
+
+    print(f"done. processed={count}, skipped_bad_charts={skipped}")
+
+
+if __name__ == "__main__":
+    main()
