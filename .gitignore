@@ -9,3 +9,5 @@ __pycache__/
 *.sqlite3
 crawl*.log
 *.sqlite3-*
+webui.out.log
+webui.err.log

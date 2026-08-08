@@ -19,39 +19,44 @@ import db
 class App:
     """内存索引：歌曲列表 + 按 music_id 取完整记录。"""
 
-    def __init__(self, conn):
-        self.conn = conn
+    def __init__(self, db_path):
+        self.db_path = db_path
         self.reload()
 
     def reload(self):
-        """重建内存索引；爬取进行中可定时调用以展示最新进度。"""
+        """重建内存索引；每次重新打开连接，爬取进行中可定时调用以展示最新进度。"""
         self.songs = []          # 轻量列表（用于表格）
         self.tag_counts = {}
-        for row in self.conn.execute(
-            "SELECT music_id, data, info_done, beatmaps_done, downloaded FROM songs ORDER BY music_id"
-        ):
-            rec = json.loads(row["data"])
-            info = rec.get("GoodsInfo") or {}
-            levels = sorted({
-                lv.get("MusicLevel")
-                for lv in info.get("LevelList", [])
-                if lv.get("MusicLev", -1) >= 0 and lv.get("MusicLevel", -1) > 0
-            })
-            tags = rec.get("Tags") or rec.get("TagList") or []
-            for t in tags:
-                self.tag_counts[t] = self.tag_counts.get(t, 0) + 1
-            self.songs.append({
-                "music_id": row["music_id"],
-                "goods_id": rec.get("GoodsID"),
-                "name": rec.get("GoodsName", ""),
-                "owner": rec.get("OwnerName", ""),
-                "tags": tags,
-                "levels": levels,
-                "n_maps": len(rec.get("BeatMaps") or []),
-                "info_done": bool(row["info_done"]),
-                "beatmaps_done": bool(row["beatmaps_done"]),
-                "downloaded": bool(row["downloaded"]),
-            })
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            for row in conn.execute(
+                "SELECT music_id, data, info_done, beatmaps_done, downloaded FROM songs ORDER BY music_id"
+            ):
+                rec = json.loads(row["data"])
+                info = rec.get("GoodsInfo") or {}
+                levels = sorted({
+                    lv.get("MusicLevel")
+                    for lv in info.get("LevelList", [])
+                    if lv.get("MusicLev", -1) >= 0 and lv.get("MusicLevel", -1) > 0
+                })
+                tags = rec.get("Tags") or rec.get("TagList") or []
+                for t in tags:
+                    self.tag_counts[t] = self.tag_counts.get(t, 0) + 1
+                self.songs.append({
+                    "music_id": row["music_id"],
+                    "goods_id": rec.get("GoodsID"),
+                    "name": rec.get("GoodsName", ""),
+                    "owner": rec.get("OwnerName", ""),
+                    "tags": tags,
+                    "levels": levels,
+                    "n_maps": len(rec.get("BeatMaps") or []),
+                    "info_done": bool(row["info_done"]),
+                    "beatmaps_done": bool(row["beatmaps_done"]),
+                    "downloaded": bool(row["downloaded"]),
+                })
+        finally:
+            conn.close()
 
     def stats(self):
         self.reload()
@@ -85,25 +90,30 @@ class App:
         return out[start:start + size], total
 
     def full(self, music_id):
-        rec = db.load(self.conn, music_id)
-        if rec is None:
-            return None
-        info = rec.get("GoodsInfo") or {}
-        return {
-            "music_id": rec.get("MusicID"),
-            "goods_id": rec.get("GoodsID"),
-            "name": rec.get("GoodsName", ""),
-            "owner": rec.get("OwnerName", ""),
-            "tags": rec.get("Tags") or rec.get("TagList") or [],
-            "audio_url": rec.get("AudioUrl"),
-            "bpm": info.get("BPM"),
-            "begin_seconds": info.get("BeginSeconds"),
-            "pic": rec.get("PicPath"),
-            "intro": rec.get("GoodsIntro"),
-            "levels": info.get("LevelList"),
-            "beatmaps": rec.get("BeatMaps") or [],
-            "info_done": True,
-        }
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            rec = db.load(conn, music_id)
+            if rec is None:
+                return None
+            info = rec.get("GoodsInfo") or {}
+            return {
+                "music_id": rec.get("MusicID"),
+                "goods_id": rec.get("GoodsID"),
+                "name": rec.get("GoodsName", ""),
+                "owner": rec.get("OwnerName", ""),
+                "tags": rec.get("Tags") or rec.get("TagList") or [],
+                "audio_url": rec.get("AudioUrl"),
+                "bpm": info.get("BPM"),
+                "begin_seconds": info.get("BeginSeconds"),
+                "pic": rec.get("PicPath"),
+                "intro": rec.get("GoodsIntro"),
+                "levels": info.get("LevelList"),
+                "beatmaps": rec.get("BeatMaps") or [],
+                "info_done": True,
+            }
+        finally:
+            conn.close()
 
 
 HTML = """<!DOCTYPE html>
@@ -284,8 +294,7 @@ def main():
     parser.add_argument("--db", default=db.DB_PATH)
     args = parser.parse_args()
 
-    conn = db.get_conn(args.db)
-    Handler.app = App(conn)
+    Handler.app = App(args.db)
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"舞立方谱面列表 UI: http://{args.host}:{args.port}  (db={args.db}, songs={len(Handler.app.songs)})")
     try:
