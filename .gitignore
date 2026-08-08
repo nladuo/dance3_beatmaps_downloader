@@ -7,3 +7,5 @@ make_beatmap2.py
 .idea/
 __pycache__/
 *.sqlite3
+crawl*.log
+*.sqlite3-*

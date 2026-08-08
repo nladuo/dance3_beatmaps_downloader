@@ -16,6 +16,7 @@ DB_PATH = "dance3.sqlite3"
 def get_conn(path: str = DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS songs (
