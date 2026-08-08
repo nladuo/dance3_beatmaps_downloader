@@ -18,11 +18,22 @@ from beatmap2malody import get_beatmap_json
 BASE_DIR = "beatmaps"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
+_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+_WIN_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
 
 
 def sanitize_name(name):
-    return _ILLEGAL.sub("|", name or "").strip().rstrip(".")
+    """??? Windows ??????????->_??????/?????/???"""
+    name = (name or "").strip()
+    name = _ILLEGAL.sub("_", name)
+    name = name.rstrip(". ")
+    if not name:
+        return "_"
+    if name.split(".")[0].upper() in _WIN_RESERVED:
+        name = "_" + name
+    if len(name) > 200:
+        name = name[:200].rstrip(". ")
+    return name or "_"
 
 
 def is_audio_bad(rec):
