@@ -42,16 +42,6 @@ python 4_download_beatmaps.py
 python dumps_infos.py
 ```
 
-## 代理
-
-脚本直接走系统/环境代理。若需手动指定（例如本地 SOCKS5 7897）：
-
-```shell
-# PowerShell
-$env:ALL_PROXY="socks5://127.0.0.1:7897"
-python 1_crawl_info_list.py
-```
-
 ## 数据字段说明
 
 - 列表接口 `GetGoodsMusic`：歌曲 `MusicID / GoodsID / GoodsName / AudioUrl / OwnerName` 等。

@@ -11,3 +11,4 @@ crawl*.log
 *.sqlite3-*
 webui.out.log
 webui.err.log
+webui.log
