@@ -42,7 +42,13 @@ def _now() -> str:
 def upsert_song(conn: sqlite3.Connection, record: dict) -> bool:
     """1 步：按 MusicID 去重写入/更新歌曲列表数据。返回 True 表示新增。"""
     mid = int(record["MusicID"])
-    exists = conn.execute("SELECT 1 FROM songs WHERE music_id=?", (mid,)).fetchone()
+    exists = conn.execute("SELECT data FROM songs WHERE music_id=?", (mid,)).fetchone()
+    if exists is not None:
+        # 合并而非覆盖：保留第 2/3 步写入的 GoodsInfo / BeatMaps / Tags 等详情，
+        # 只用列表接口的最新字段（点赞、精选、标签、等级列表等）刷新。
+        merged = json.loads(exists[0])
+        merged.update(record)
+        record = merged
     conn.execute(
         """
         INSERT INTO songs(music_id, goods_id, goods_name, data, updated_at)
